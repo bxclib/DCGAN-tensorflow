@@ -182,7 +182,7 @@ def visualize(sess, dcgan, config, option):
       z_sample = np.zeros([config.batch_size, dcgan.z_dim])
       for kdx, z in enumerate(z_sample):
         z[idx] = values[kdx]
-
+      
       if config.dataset == "mnist":
         y = np.random.choice(10, config.batch_size)
         y_one_hot = np.zeros((config.batch_size, 10))

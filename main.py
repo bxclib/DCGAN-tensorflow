@@ -25,6 +25,9 @@ flags.DEFINE_string("sample_dir", "samples", "Directory name to save the image s
 flags.DEFINE_boolean("train", False, "True for training, False for testing [False]")
 flags.DEFINE_boolean("crop", False, "True for training, False for testing [False]")
 flags.DEFINE_boolean("visualize", False, "True for visualizing, False for nothing [False]")
+flags.DEFINE_boolean("W_GAN",True,"True use W-GAN,false use DC-GAN")
+flags.DEFINE_integer("CRITIC_NUM",5,"CRITIC_NUM of W-GAN")
+flags.DEFINE_integer("LAMBDA",10,"LAMBDA of W-GAN")
 FLAGS = flags.FLAGS
 
 def main(_):
@@ -59,7 +62,8 @@ def main(_):
           input_fname_pattern=FLAGS.input_fname_pattern,
           crop=FLAGS.crop,
           checkpoint_dir=FLAGS.checkpoint_dir,
-          sample_dir=FLAGS.sample_dir)
+          sample_dir=FLAGS.sample_dir,
+          FLAGS=FLAGS)
     else:
       dcgan = DCGAN(
           sess,
@@ -73,7 +77,8 @@ def main(_):
           input_fname_pattern=FLAGS.input_fname_pattern,
           crop=FLAGS.crop,
           checkpoint_dir=FLAGS.checkpoint_dir,
-          sample_dir=FLAGS.sample_dir)
+          sample_dir=FLAGS.sample_dir,
+          FLAGS=FLAGS)
 
     show_all_variables()
 
@@ -91,7 +96,7 @@ def main(_):
     #                 [dcgan.h4_w, dcgan.h4_b, None])
 
     # Below is codes for visualization
-    OPTION = 3
+
     visualize(sess, dcgan, FLAGS, FLAGS.visualize_option)
 
 if __name__ == '__main__':

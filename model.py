@@ -18,7 +18,7 @@ class DCGAN(object):
          batch_size=64, sample_num = 64, output_height=64, output_width=64,
          y_dim=None, z_dim=100, gf_dim=64, df_dim=64,
          gfc_dim=1024, dfc_dim=1024, c_dim=3, dataset_name='default',
-         input_fname_pattern='*.jpg', checkpoint_dir=None, sample_dir=None):
+         input_fname_pattern='*.jpg', checkpoint_dir=None, sample_dir=None,FLAGS=None):
     """
 
     Args:
@@ -34,7 +34,7 @@ class DCGAN(object):
     """
     self.sess = sess
     self.crop = crop
-
+    self.FLAGS = FLAGS
     self.batch_size = batch_size
     self.sample_num = sample_num
 
@@ -117,28 +117,52 @@ class DCGAN(object):
 
       self.sampler = self.sampler(self.z)
       self.D_, self.D_logits_ = self.discriminator(self.G, reuse=True)
-
-    self.d_sum = histogram_summary("d", self.D)
-    self.d__sum = histogram_summary("d_", self.D_)
-    self.G_sum = image_summary("G", self.G)
+    if self.FLAGS.W_GAN is False:
+        self.d_sum = histogram_summary("d", self.D)
+        self.d__sum = histogram_summary("d_", self.D_)
+        self.G_sum = image_summary("G", self.G)
+    else:
+        self.d_sum = histogram_summary("d", self.D_logits)
+        self.d__sum = histogram_summary("d_", self.D_logits_)
+        self.G_sum = image_summary("G", self.G)
 
     def sigmoid_cross_entropy_with_logits(x, y):
       try:
         return tf.nn.sigmoid_cross_entropy_with_logits(logits=x, labels=y)
       except:
         return tf.nn.sigmoid_cross_entropy_with_logits(logits=x, targets=y)
+    if self.FLAGS.W_GAN is True:
+        # Standard WGAN loss
+            self.g_loss = -tf.reduce_mean(self.D_logits_)
+            self.d_loss = tf.reduce_mean(self.D_logits_) - tf.reduce_mean(self.D_logits)
 
-    self.d_loss_real = tf.reduce_mean(
-      sigmoid_cross_entropy_with_logits(self.D_logits, tf.ones_like(self.D)))
-    self.d_loss_fake = tf.reduce_mean(
-      sigmoid_cross_entropy_with_logits(self.D_logits_, tf.zeros_like(self.D_)))
-    self.g_loss = tf.reduce_mean(
-      sigmoid_cross_entropy_with_logits(self.D_logits_, tf.ones_like(self.D_)))
+            # Gradient penalty
+            alpha = tf.random_uniform(
+                shape=[self.batch_size,1], 
+                minval=0.,
+                maxval=1.
+            )
+            differences = tf.reshape(self.G - inputs,[self.batch_size,-1])
+            interpolates = tf.reshape(inputs,[self.batch_size,-1]) + (alpha*differences)
+            interpolates = tf.reshape(interpolates,inputs.get_shape())
+            _ ,d_image = self.discriminator(interpolates,reuse=True)
+            gradients = tf.gradients(d_image, [interpolates])[0]
+            slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
+            gradient_penalty = tf.reduce_mean((slopes-1.)**2)
+            self.d_loss += self.FLAGS.LAMBDA*gradient_penalty
 
-    self.d_loss_real_sum = scalar_summary("d_loss_real", self.d_loss_real)
-    self.d_loss_fake_sum = scalar_summary("d_loss_fake", self.d_loss_fake)
-                          
-    self.d_loss = self.d_loss_real + self.d_loss_fake
+    else:
+        self.d_loss_real = tf.reduce_mean(
+          sigmoid_cross_entropy_with_logits(self.D_logits, tf.ones_like(self.D)))
+        self.d_loss_fake = tf.reduce_mean(
+          sigmoid_cross_entropy_with_logits(self.D_logits_, tf.zeros_like(self.D_)))
+        self.g_loss = tf.reduce_mean(
+          sigmoid_cross_entropy_with_logits(self.D_logits_, tf.ones_like(self.D_)))
+
+        self.d_loss_real_sum = scalar_summary("d_loss_real", self.d_loss_real)
+        self.d_loss_fake_sum = scalar_summary("d_loss_fake", self.d_loss_fake)
+                              
+        self.d_loss = self.d_loss_real + self.d_loss_fake
 
     self.g_loss_sum = scalar_summary("g_loss", self.g_loss)
     self.d_loss_sum = scalar_summary("d_loss", self.d_loss)
@@ -150,20 +174,32 @@ class DCGAN(object):
 
     self.saver = tf.train.Saver()
 
+
   def train(self, config):
-    d_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
-              .minimize(self.d_loss, var_list=self.d_vars)
-    g_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
-              .minimize(self.g_loss, var_list=self.g_vars)
+    if self.FLAGS.W_GAN is False:
+        d_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
+                  .minimize(self.d_loss, var_list=self.d_vars)
+        g_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
+                  .minimize(self.g_loss, var_list=self.g_vars)
+    else:
+        d_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1,beta2=0.9) \
+                  .minimize(self.d_loss, var_list=self.d_vars)
+        g_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1,beta2=0.9) \
+                  .minimize(self.g_loss, var_list=self.g_vars)
     try:
       tf.global_variables_initializer().run()
     except:
       tf.initialize_all_variables().run()
-
-    self.g_sum = merge_summary([self.z_sum, self.d__sum,
-      self.G_sum, self.d_loss_fake_sum, self.g_loss_sum])
-    self.d_sum = merge_summary(
-        [self.z_sum, self.d_sum, self.d_loss_real_sum, self.d_loss_sum])
+    if self.FLAGS.W_GAN is True:
+        self.g_sum = merge_summary([self.z_sum, self.d__sum,
+          self.G_sum, self.g_loss_sum])
+        self.d_sum = merge_summary(
+            [self.z_sum, self.d_sum,  self.d_loss_sum])
+    else:
+        self.g_sum = merge_summary([self.z_sum, self.d__sum,
+          self.G_sum, self.d_loss_fake_sum, self.g_loss_sum])
+        self.d_sum = merge_summary(
+            [self.z_sum, self.d_sum, self.d_loss_real_sum, self.d_loss_sum])
     self.writer = SummaryWriter("./logs", self.sess.graph)
 
     sample_z = np.random.uniform(-1, 1, size=(self.sample_num , self.z_dim))
@@ -224,67 +260,114 @@ class DCGAN(object):
 
         batch_z = np.random.uniform(-1, 1, [config.batch_size, self.z_dim]) \
               .astype(np.float32)
+        if self.FLAGS.W_GAN is False:
+            if config.dataset == 'mnist':
+              # Update D network
+              _, summary_str = self.sess.run([d_optim, self.d_sum],
+                feed_dict={ 
+                  self.inputs: batch_images,
+                  self.z: batch_z,
+                  self.y:batch_labels,
+                })
+              self.writer.add_summary(summary_str, counter)
 
-        if config.dataset == 'mnist':
-          # Update D network
-          _, summary_str = self.sess.run([d_optim, self.d_sum],
-            feed_dict={ 
-              self.inputs: batch_images,
-              self.z: batch_z,
-              self.y:batch_labels,
-            })
-          self.writer.add_summary(summary_str, counter)
+              # Update G network
+              _, summary_str = self.sess.run([g_optim, self.g_sum],
+                feed_dict={
+                  self.z: batch_z, 
+                  self.y:batch_labels,
+                })
+              self.writer.add_summary(summary_str, counter)
 
-          # Update G network
-          _, summary_str = self.sess.run([g_optim, self.g_sum],
-            feed_dict={
-              self.z: batch_z, 
-              self.y:batch_labels,
-            })
-          self.writer.add_summary(summary_str, counter)
+              # Run g_optim twice to make sure that d_loss does not go to zero (different from paper)
+              _, summary_str = self.sess.run([g_optim, self.g_sum],
+                feed_dict={ self.z: batch_z, self.y:batch_labels })
+              self.writer.add_summary(summary_str, counter)
+              
+              errD_fake = self.d_loss_fake.eval({
+                  self.z: batch_z, 
+                  self.y:batch_labels
+              })
+              errD_real = self.d_loss_real.eval({
+                  self.inputs: batch_images,
+                  self.y:batch_labels
+              })
+              errG = self.g_loss.eval({
+                  self.z: batch_z,
+                  self.y: batch_labels
+              })
+            else:
+              # Update D network
+              _, summary_str = self.sess.run([d_optim, self.d_sum],
+                feed_dict={ self.inputs: batch_images, self.z: batch_z })
+              self.writer.add_summary(summary_str, counter)
 
-          # Run g_optim twice to make sure that d_loss does not go to zero (different from paper)
-          _, summary_str = self.sess.run([g_optim, self.g_sum],
-            feed_dict={ self.z: batch_z, self.y:batch_labels })
-          self.writer.add_summary(summary_str, counter)
-          
-          errD_fake = self.d_loss_fake.eval({
-              self.z: batch_z, 
-              self.y:batch_labels
-          })
-          errD_real = self.d_loss_real.eval({
-              self.inputs: batch_images,
-              self.y:batch_labels
-          })
-          errG = self.g_loss.eval({
-              self.z: batch_z,
-              self.y: batch_labels
-          })
+              # Update G network
+              _, summary_str = self.sess.run([g_optim, self.g_sum],
+                feed_dict={ self.z: batch_z })
+              self.writer.add_summary(summary_str, counter)
+
+              # Run g_optim twice to make sure that d_loss does not go to zero (different from paper)
+              _, summary_str = self.sess.run([g_optim, self.g_sum],
+                feed_dict={ self.z: batch_z })
+              self.writer.add_summary(summary_str, counter)
+              
+              errD_fake = self.d_loss_fake.eval({ self.z: batch_z })
+              errD_real = self.d_loss_real.eval({ self.inputs: batch_images })
+              errG = self.g_loss.eval({self.z: batch_z})
         else:
-          # Update D network
-          _, summary_str = self.sess.run([d_optim, self.d_sum],
-            feed_dict={ self.inputs: batch_images, self.z: batch_z })
-          self.writer.add_summary(summary_str, counter)
+            if config.dataset == 'mnist':
+              for _ in range(self.FLAGS.CRITIC_NUM):
+                  # Update D network
+                  _, summary_str = self.sess.run([d_optim, self.d_sum],
+                    feed_dict={ 
+                      self.inputs: batch_images,
+                      self.z: batch_z,
+                      self.y:batch_labels,
+                    })
+              self.writer.add_summary(summary_str, counter)
 
-          # Update G network
-          _, summary_str = self.sess.run([g_optim, self.g_sum],
-            feed_dict={ self.z: batch_z })
-          self.writer.add_summary(summary_str, counter)
+              # Update G network
+              _, summary_str = self.sess.run([g_optim, self.g_sum],
+                feed_dict={
+                  self.z: batch_z, 
+                  self.y:batch_labels,
+                })
+              self.writer.add_summary(summary_str, counter)
 
-          # Run g_optim twice to make sure that d_loss does not go to zero (different from paper)
-          _, summary_str = self.sess.run([g_optim, self.g_sum],
-            feed_dict={ self.z: batch_z })
-          self.writer.add_summary(summary_str, counter)
-          
-          errD_fake = self.d_loss_fake.eval({ self.z: batch_z })
-          errD_real = self.d_loss_real.eval({ self.inputs: batch_images })
-          errG = self.g_loss.eval({self.z: batch_z})
+              errD = self.d_loss.eval({
+                  self.z: batch_z, 
+                  self.y:batch_labels,
+                  self.inputs: batch_images
+              })
+              errG = self.g_loss.eval({
+                  self.z: batch_z,
+                  self.y: batch_labels
+              })
+            else:
+              for _ in range(self.FLAGS.CRITIC_NUM):
+                  # Update D network
+                  _, summary_str = self.sess.run([d_optim, self.d_sum],
+                    feed_dict={ self.inputs: batch_images, self.z: batch_z })
+              self.writer.add_summary(summary_str, counter)
 
+              # Update G network
+              _, summary_str = self.sess.run([g_optim, self.g_sum],
+                feed_dict={ self.z: batch_z })
+              self.writer.add_summary(summary_str, counter)
+
+           
+              errD = self.d_loss.eval({ self.z: batch_z , self.inputs: batch_images})
+              errG = self.g_loss.eval({self.z: batch_z})
         counter += 1
-        print("Epoch: [%2d] [%4d/%4d] time: %4.4f, d_loss: %.8f, g_loss: %.8f" \
-          % (epoch, idx, batch_idxs,
-            time.time() - start_time, errD_fake+errD_real, errG))
-
+        if self.FLAGS.W_GAN is False:
+            print("Epoch: [%2d] [%4d/%4d] time: %4.4f, d_loss: %.8f, g_loss: %.8f" \
+              % (epoch, idx, batch_idxs,
+                time.time() - start_time, errD_fake+errD_real, errG))
+        else:
+            print("Epoch: [%2d] [%4d/%4d] time: %4.4f, d_loss: %.8f, g_loss: %.8f" \
+              % (epoch, idx, batch_idxs,
+                time.time() - start_time, errD, errG))
         if np.mod(counter, 100) == 1:
           if config.dataset == 'mnist':
             samples, d_loss, g_loss = self.sess.run(
@@ -323,30 +406,42 @@ class DCGAN(object):
 
       if not self.y_dim:
         h0 = lrelu(conv2d(image, self.df_dim, name='d_h0_conv'))
-        h1 = lrelu(self.d_bn1(conv2d(h0, self.df_dim*2, name='d_h1_conv')))
-        h2 = lrelu(self.d_bn2(conv2d(h1, self.df_dim*4, name='d_h2_conv')))
-        h3 = lrelu(self.d_bn3(conv2d(h2, self.df_dim*8, name='d_h3_conv')))
+        if self.FLAGS.W_GAN is False:
+            h1 = lrelu(self.d_bn1(conv2d(h0, self.df_dim*2, name='d_h1_conv')))
+            h2 = lrelu(self.d_bn2(conv2d(h1, self.df_dim*4, name='d_h2_conv')))
+            h3 = lrelu(self.d_bn3(conv2d(h2, self.df_dim*8, name='d_h3_conv')))
+        else:
+            h1 = lrelu(conv2d(h0, self.df_dim*2, name='d_h1_conv'))
+            h2 = lrelu(conv2d(h1, self.df_dim*4, name='d_h2_conv'))
+            h3 = lrelu(conv2d(h2, self.df_dim*8, name='d_h3_conv'))
         h4 = linear(tf.reshape(h3, [self.batch_size, -1]), 1, 'd_h4_lin')
-
-        return tf.nn.sigmoid(h4), h4
+        if self.FLAGS.W_GAN is False:
+            return tf.nn.sigmoid(h4), h4
+        else:
+            return None,tf.reshape(h4, [-1])
       else:
         yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
         x = conv_cond_concat(image, yb)
 
         h0 = lrelu(conv2d(x, self.c_dim + self.y_dim, name='d_h0_conv'))
         h0 = conv_cond_concat(h0, yb)
-
-        h1 = lrelu(self.d_bn1(conv2d(h0, self.df_dim + self.y_dim, name='d_h1_conv')))
+        if self.FLAGS.W_GAN is False:
+            h1 = lrelu(self.d_bn1(conv2d(h0, self.df_dim + self.y_dim, name='d_h1_conv')))
+        else:
+            h1 = lrelu(conv2d(h0, self.df_dim + self.y_dim, name='d_h1_conv'))
         h1 = tf.reshape(h1, [self.batch_size, -1])      
         h1 = concat([h1, y], 1)
-        
-        h2 = lrelu(self.d_bn2(linear(h1, self.dfc_dim, 'd_h2_lin')))
+        if self.FLAGS.W_GAN is False:        
+            h2 = lrelu(self.d_bn2(linear(h1, self.dfc_dim, 'd_h2_lin')))
+        else:
+            h2 = lrelu(linear(h1, self.dfc_dim, 'd_h2_lin'))
         h2 = concat([h2, y], 1)
 
         h3 = linear(h2, 1, 'd_h3_lin')
-        
-        return tf.nn.sigmoid(h3), h3
-
+        if self.FLAGS.W_GAN is False:
+            return tf.nn.sigmoid(h3), h3
+        else:
+            return None,tf.reshape(h3, [-1])
   def generator(self, z, y=None):
     with tf.variable_scope("generator") as scope:
       if not self.y_dim:
