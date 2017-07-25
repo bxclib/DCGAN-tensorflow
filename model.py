@@ -18,7 +18,7 @@ class DCGAN(object):
          batch_size=64, sample_num = 64, output_height=64, output_width=64,
          y_dim=None, z_dim=100, gf_dim=64, df_dim=64,
          gfc_dim=1024, dfc_dim=1024, c_dim=3, dataset_name='default',
-         input_fname_pattern='*.jpg', checkpoint_dir=None, sample_dir=None,FLAGS=None):
+         input_fname_pattern='*.jpg', checkpoint_dir=None, sample_dir=None,FLAGS=None,n_hidden_recog_2=256):
     """
 
     Args:
@@ -45,7 +45,7 @@ class DCGAN(object):
 
     self.y_dim = y_dim
     self.z_dim = z_dim
-
+    self.n_hidden_recog_2=n_hidden_recog_2
     self.gf_dim = gf_dim
     self.df_dim = df_dim
 
@@ -112,9 +112,15 @@ class DCGAN(object):
       self.D_, self.D_logits_ = \
           self.discriminator(self.G, self.y, reuse=True)
     else:
-      self.G = self.generator(self.z)
-      self.D, self.D_logits = self.discriminator(inputs)
-
+      self.z_mean, self.z_log_sigma_sq = self.encoder(self.inputs,reuse=False)
+      eps = tf.random_normal((self.batch_size, self.z_dim), 0, 1, dtype=tf.float32)
+      # z = mu + sigma*epsilon
+      self.E = tf.add(self.z_mean, tf.multiply(tf.sqrt(tf.exp(self.z_log_sigma_sq)), eps))
+      self.inputs_= self.generator(self.E)
+      self.G = self.generator(self.z,reuse=True)
+      self.D, self.D_logits = self.discriminator(self.inputs)
+      self.D2, self.D_logits2 = self.discriminator(self.inputs_,reuse=True)
+      
       self.sampler = self.sampler(self.z)
       self.D_, self.D_logits_ = self.discriminator(self.G, reuse=True)
     if self.FLAGS.W_GAN is False:
@@ -154,24 +160,49 @@ class DCGAN(object):
     else:
         self.d_loss_real = tf.reduce_mean(
           sigmoid_cross_entropy_with_logits(self.D_logits, tf.ones_like(self.D)))
-        self.d_loss_fake = tf.reduce_mean(
+        self.d_loss_fake1 = tf.reduce_mean(
           sigmoid_cross_entropy_with_logits(self.D_logits_, tf.zeros_like(self.D_)))
-        self.g_loss = tf.reduce_mean(
+        self.d_loss_fake2 = tf.reduce_mean(
+          sigmoid_cross_entropy_with_logits(self.D_logits2, tf.zeros_like(self.D2)))
+        self.d_loss_fake = self.d_loss_fake1 + self.d_loss_fake2
+        self.g_loss1 = tf.reduce_mean(
           sigmoid_cross_entropy_with_logits(self.D_logits_, tf.ones_like(self.D_)))
-
+        self.g_loss2 = tf.reduce_mean(
+          sigmoid_cross_entropy_with_logits(self.D_logits2, tf.ones_like(self.D2)))
+        self.g_loss = self.g_loss1 + self.g_loss2
         self.d_loss_real_sum = scalar_summary("d_loss_real", self.d_loss_real)
         self.d_loss_fake_sum = scalar_summary("d_loss_fake", self.d_loss_fake)
                               
         self.d_loss = self.d_loss_real + self.d_loss_fake
-
+        # The loss is composed of two terms:
+        # 1.) The reconstruction loss (the negative log probability
+        #     of the input under the reconstructed Bernoulli distribution 
+        #     induced by the decoder in the data space).
+        #     This can be interpreted as the number of "nats" required
+        #     for reconstructing the input when the activation in latent
+        #     is given.
+        # Adding 1e-10 to avoid evaluation of log(0.0)
+        reconstr_loss =  tf.reduce_sum(tf.square(self.inputs-self.inputs_),
+                           [1,2,3])
+        # 2.) The latent loss, which is defined as the Kullback Leibler divergence 
+        ##    between the distribution in latent space induced by the encoder on 
+        #     the data and some prior. This acts as a kind of regularizer.
+        #     This can be interpreted as the number of "nats" required
+        #     for transmitting the the latent space distribution given
+        #     the prior.
+        latent_loss = -0.5 * tf.reduce_sum(1 + self.z_log_sigma_sq 
+                                           - tf.square(self.z_mean) 
+                                           - tf.exp(self.z_log_sigma_sq), 1)
+        self.e_loss = tf.reduce_mean(reconstr_loss + latent_loss)
+        self.g_loss = self.g_loss + self.FLAGS.GAMMA * tf.reduce_mean(reconstr_loss)
     self.g_loss_sum = scalar_summary("g_loss", self.g_loss)
     self.d_loss_sum = scalar_summary("d_loss", self.d_loss)
-
+    self.e_loss_sum = scalar_summary("e_loss", self.e_loss)
     t_vars = tf.trainable_variables()
 
     self.d_vars = [var for var in t_vars if 'd_' in var.name]
     self.g_vars = [var for var in t_vars if 'g_' in var.name]
-
+    self.e_vars = [var for var in t_vars if 'e_' in var.name]
     self.saver = tf.train.Saver()
 
 
@@ -181,11 +212,14 @@ class DCGAN(object):
                   .minimize(self.d_loss, var_list=self.d_vars)
         g_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
                   .minimize(self.g_loss, var_list=self.g_vars)
+        e_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1,beta2=0.9) \
+                  .minimize(self.e_loss, var_list=self.e_vars)
     else:
         d_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1,beta2=0.9) \
                   .minimize(self.d_loss, var_list=self.d_vars)
         g_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1,beta2=0.9) \
                   .minimize(self.g_loss, var_list=self.g_vars)
+
     try:
       tf.global_variables_initializer().run()
     except:
@@ -202,7 +236,7 @@ class DCGAN(object):
             [self.z_sum, self.d_sum, self.d_loss_real_sum, self.d_loss_sum])
     self.writer = SummaryWriter("./logs", self.sess.graph)
 
-    sample_z = np.random.uniform(-1, 1, size=(self.sample_num , self.z_dim))
+    sample_z = np.random.normal(size=(self.sample_num , self.z_dim))
     
     if config.dataset == 'mnist':
       sample_inputs = self.data_X[0:self.sample_num]
@@ -258,7 +292,7 @@ class DCGAN(object):
           else:
             batch_images = np.array(batch).astype(np.float32)
 
-        batch_z = np.random.uniform(-1, 1, [config.batch_size, self.z_dim]) \
+        batch_z = np.random.normal(size=[config.batch_size, self.z_dim]) \
               .astype(np.float32)
         if self.FLAGS.W_GAN is False:
             if config.dataset == 'mnist':
@@ -297,24 +331,31 @@ class DCGAN(object):
                   self.y: batch_labels
               })
             else:
+              #print batch_images.dtype
+              # Update E network
+              self.sess.run([e_optim],
+                feed_dict={ self.inputs: batch_images})
+
+
+              # Update G network
+              _, summary_str = self.sess.run([g_optim, self.g_sum],
+                feed_dict={ self.z: batch_z ,self.inputs: batch_images})
+              self.writer.add_summary(summary_str, counter)
+              # Run g_optim twice to make sure that d_loss does not go to zero (different from paper)
+              _, summary_str = self.sess.run([g_optim, self.g_sum],
+                feed_dict={ self.z: batch_z ,self.inputs: batch_images})
+              self.writer.add_summary(summary_str, counter)
               # Update D network
               _, summary_str = self.sess.run([d_optim, self.d_sum],
                 feed_dict={ self.inputs: batch_images, self.z: batch_z })
               self.writer.add_summary(summary_str, counter)
 
-              # Update G network
-              _, summary_str = self.sess.run([g_optim, self.g_sum],
-                feed_dict={ self.z: batch_z })
-              self.writer.add_summary(summary_str, counter)
 
-              # Run g_optim twice to make sure that d_loss does not go to zero (different from paper)
-              _, summary_str = self.sess.run([g_optim, self.g_sum],
-                feed_dict={ self.z: batch_z })
-              self.writer.add_summary(summary_str, counter)
               
-              errD_fake = self.d_loss_fake.eval({ self.z: batch_z })
+              errD_fake = self.d_loss_fake.eval({ self.z: batch_z,self.inputs: batch_images })
               errD_real = self.d_loss_real.eval({ self.inputs: batch_images })
-              errG = self.g_loss.eval({self.z: batch_z})
+              errG = self.g_loss.eval({self.z: batch_z,self.inputs: batch_images})
+              errE = self.e_loss.eval({self.inputs: batch_images })
         else:
             if config.dataset == 'mnist':
               for _ in range(self.FLAGS.CRITIC_NUM):
@@ -361,9 +402,9 @@ class DCGAN(object):
               errG = self.g_loss.eval({self.z: batch_z})
         counter += 1
         if self.FLAGS.W_GAN is False:
-            print("Epoch: [%2d] [%4d/%4d] time: %4.4f, d_loss: %.8f, g_loss: %.8f" \
+            print("Epoch: [%2d] [%4d/%4d] time: %4.4f, d_loss: %.8f, g_loss: %.8f, e_loss: %.8f" \
               % (epoch, idx, batch_idxs,
-                time.time() - start_time, errD_fake+errD_real, errG))
+                time.time() - start_time, errD_fake+errD_real, errG, errE))
         else:
             print("Epoch: [%2d] [%4d/%4d] time: %4.4f, d_loss: %.8f, g_loss: %.8f" \
               % (epoch, idx, batch_idxs,
@@ -442,8 +483,10 @@ class DCGAN(object):
             return tf.nn.sigmoid(h3), h3
         else:
             return None,tf.reshape(h3, [-1])
-  def generator(self, z, y=None):
+  def generator(self, z, y=None,reuse = False):
     with tf.variable_scope("generator") as scope:
+      if reuse:
+        scope.reuse_variables()
       if not self.y_dim:
         s_h, s_w = self.output_height, self.output_width
         s_h2, s_w2 = conv_out_size_same(s_h, 2), conv_out_size_same(s_w, 2)
@@ -500,7 +543,38 @@ class DCGAN(object):
 
         return tf.nn.sigmoid(
             deconv2d(h2, [self.batch_size, s_h, s_w, self.c_dim], name='g_h3'))
-
+  def xavier_init(self,fan_in, fan_out, constant=1): 
+        """ Xavier initialization of network weights"""
+        # https://stackoverflow.com/questions/33640581/how-to-do-xavier-initialization-on-tensorflow
+        low = -constant*np.sqrt(6.0/(fan_in + fan_out)) 
+        high = constant*np.sqrt(6.0/(fan_in + fan_out))
+        return tf.random_uniform((fan_in, fan_out), 
+                                 minval=low, maxval=high, 
+                                 dtype=tf.float32)
+  
+  def encoder(self,image,reuse=False):
+        with tf.variable_scope("encoder") as scope:
+            if reuse:
+                scope.reuse_variables()
+            # Generate probabilistic encoder (recognition network), which
+            # maps inputs onto a normal distribution in latent space.
+            # The transformation is parametrized and can be learned.
+            weights = {
+            'out_mean': tf.Variable(self.xavier_init(self.n_hidden_recog_2, self.z_dim),"e_weight_out_mean"),
+            'out_log_sigma': tf.Variable(self.xavier_init(self.n_hidden_recog_2, self.z_dim),"e_weight_out_log_sigma")}
+            biases = {
+            'out_mean': tf.Variable(tf.zeros([self.z_dim], dtype=tf.float32),"e_bias_out_mean"),
+            'out_log_sigma': tf.Variable(tf.zeros([self.z_dim], dtype=tf.float32),"e_bias_out_log_sigma")}
+            h0 = tf.nn.relu(conv2d(image, self.df_dim, name='e_h0_conv'))    #out 16*16*32
+            h1 = tf.nn.relu(conv2d(h0, self.df_dim*2, name='e_h1_conv'))
+            h2 = tf.nn.relu(conv2d(h1, self.df_dim*4, name='e_h2_conv'))
+            h3 = tf.nn.relu(conv2d(h2, self.df_dim*8, name='e_h3_conv'))
+            h4 = linear(tf.reshape(h3, [self.batch_size, -1]), self.n_hidden_recog_2, 'e_h4_lin')
+            z_mean = tf.add(tf.matmul(h4, weights['out_mean']),
+                            biases['out_mean'])
+            z_log_sigma_sq =                 tf.add(tf.matmul(h4, weights['out_log_sigma']), 
+                       biases['out_log_sigma'])
+            return (z_mean, z_log_sigma_sq)  
   def sampler(self, z, y=None):
     with tf.variable_scope("generator") as scope:
       scope.reuse_variables()
