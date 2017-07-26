@@ -409,6 +409,7 @@ class DCGAN(object):
             print("Epoch: [%2d] [%4d/%4d] time: %4.4f, d_loss: %.8f, g_loss: %.8f" \
               % (epoch, idx, batch_idxs,
                 time.time() - start_time, errD, errG))
+        
         if np.mod(counter, 100) == 1:
           if config.dataset == 'mnist':
             samples, d_loss, g_loss = self.sess.run(
@@ -436,7 +437,7 @@ class DCGAN(object):
               print("[Sample] d_loss: %.8f, g_loss: %.8f" % (d_loss, g_loss)) 
             except:
               print("one pic error!...")
-
+            self.reconstruction(batch_images,config,epoch,idx)
         if np.mod(counter, 500) == 2:
           self.save(config.checkpoint_dir, counter)
 
@@ -696,3 +697,25 @@ class DCGAN(object):
     else:
       print(" [*] Failed to find a checkpoint")
       return False, 0
+  def reconstruction(self,image,config,epoch,idx):
+      z_mean, z_log_sigma_sq = self.sess.run([self.z_mean, self.z_log_sigma_sq],feed_dict={
+                    self.inputs: image
+                })
+      eps = np.random.normal(size=[config.batch_size, self.z_dim]) \
+              .astype(np.float32)
+      # z = mu + sigma*epsilon
+      sample_z = (z_mean+np.multiply(np.sqrt(np.exp(z_log_sigma_sq)), eps))
+      try:
+              samples = self.sess.run(
+                self.sampler,
+                feed_dict={
+                    self.z: sample_z,
+                },
+              )
+              save_images(image, image_manifold_size(image.shape[0]),
+                    './{}/train_{:02d}_{:04d}(original).png'.format(config.sample_dir, epoch, idx))
+              save_images(samples, image_manifold_size(samples.shape[0]),
+                    './{}/train_{:02d}_{:04d}(reconstruction).png'.format(config.sample_dir, epoch, idx))
+      except:
+              print("one pic error!...")
+
