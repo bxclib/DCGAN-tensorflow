@@ -156,6 +156,27 @@ class DCGAN(object):
             slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
             gradient_penalty = tf.reduce_mean((slopes-1.)**2)
             self.d_loss += self.FLAGS.LAMBDA*gradient_penalty
+            # The loss is composed of two terms:
+            # 1.) The reconstruction loss (the negative log probability
+            #     of the input under the reconstructed Bernoulli distribution 
+            #     induced by the decoder in the data space).
+            #     This can be interpreted as the number of "nats" required
+            #     for reconstructing the input when the activation in latent
+            #     is given.
+            # Adding 1e-10 to avoid evaluation of log(0.0)
+            reconstr_loss =  tf.reduce_sum(tf.square(self.inputs-self.inputs_),
+                               [1,2,3])
+            # 2.) The latent loss, which is defined as the Kullback Leibler divergence 
+            ##    between the distribution in latent space induced by the encoder on 
+            #     the data and some prior. This acts as a kind of regularizer.
+            #     This can be interpreted as the number of "nats" required
+            #     for transmitting the the latent space distribution given
+            #     the prior.
+            latent_loss = -0.5 * tf.reduce_sum(1 + self.z_log_sigma_sq 
+                                               - tf.square(self.z_mean) 
+                                               - tf.exp(self.z_log_sigma_sq), 1)
+            self.e_loss = tf.reduce_mean(reconstr_loss + latent_loss)
+            self.g_loss = self.g_loss + self.FLAGS.GAMMA * tf.reduce_mean(reconstr_loss)
 
     else:
         self.d_loss_real = tf.reduce_mean(
@@ -212,13 +233,15 @@ class DCGAN(object):
                   .minimize(self.d_loss, var_list=self.d_vars)
         g_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
                   .minimize(self.g_loss, var_list=self.g_vars)
-        e_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1,beta2=0.9) \
+        e_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1) \
                   .minimize(self.e_loss, var_list=self.e_vars)
     else:
         d_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1,beta2=0.9) \
                   .minimize(self.d_loss, var_list=self.d_vars)
         g_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1,beta2=0.9) \
                   .minimize(self.g_loss, var_list=self.g_vars)
+        e_optim = tf.train.AdamOptimizer(config.learning_rate, beta1=config.beta1,beta2=0.9) \
+                  .minimize(self.e_loss, var_list=self.e_vars)
 
     try:
       tf.global_variables_initializer().run()
@@ -386,30 +409,34 @@ class DCGAN(object):
                   self.y: batch_labels
               })
             else:
+
               for _ in range(self.FLAGS.CRITIC_NUM):
+
                   # Update D network
                   _, summary_str = self.sess.run([d_optim, self.d_sum],
                     feed_dict={ self.inputs: batch_images, self.z: batch_z })
               self.writer.add_summary(summary_str, counter)
-
+              # Update E network
+              self.sess.run([e_optim],feed_dict={ self.inputs: batch_images})
               # Update G network
               _, summary_str = self.sess.run([g_optim, self.g_sum],
-                feed_dict={ self.z: batch_z })
+                feed_dict={  self.z: batch_z ,self.inputs: batch_images })
+              
               self.writer.add_summary(summary_str, counter)
 
-           
-              errD = self.d_loss.eval({ self.z: batch_z , self.inputs: batch_images})
-              errG = self.g_loss.eval({self.z: batch_z})
+              errE = self.e_loss.eval({self.inputs: batch_images })
+              errD = self.d_loss.eval({ self.z: batch_z ,self.inputs: batch_images})
+              errG = self.g_loss.eval({ self.z: batch_z ,self.inputs: batch_images})
         counter += 1
         if self.FLAGS.W_GAN is False:
             print("Epoch: [%2d] [%4d/%4d] time: %4.4f, d_loss: %.8f, g_loss: %.8f, e_loss: %.8f" \
               % (epoch, idx, batch_idxs,
                 time.time() - start_time, errD_fake+errD_real, errG, errE))
         else:
-            print("Epoch: [%2d] [%4d/%4d] time: %4.4f, d_loss: %.8f, g_loss: %.8f" \
+            print("Epoch: [%2d] [%4d/%4d] time: %4.4f, d_loss: %.8f, g_loss: %.8f, e_loss: %.8f" \
               % (epoch, idx, batch_idxs,
-                time.time() - start_time, errD, errG))
-        
+                time.time() - start_time, errD, errG, errE))
+         
         if np.mod(counter, 100) == 1:
           if config.dataset == 'mnist':
             samples, d_loss, g_loss = self.sess.run(

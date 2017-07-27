@@ -26,9 +26,9 @@ flags.DEFINE_boolean("train", False, "True for training, False for testing [Fals
 flags.DEFINE_boolean("crop", False, "True for training, False for testing [False]")
 flags.DEFINE_boolean("visualize", False, "True for visualizing, False for nothing [False]")
 flags.DEFINE_boolean("W_GAN",True,"True use W-GAN,false use DC-GAN")
-flags.DEFINE_integer("CRITIC_NUM",5,"CRITIC_NUM of W-GAN")
+flags.DEFINE_integer("CRITIC_NUM",10,"CRITIC_NUM of W-GAN")
 flags.DEFINE_integer("LAMBDA",10,"LAMBDA of W-GAN")
-flags.DEFINE_float("GAMMA",0.005,"GAMMA of VAE-GAN")
+flags.DEFINE_float("GAMMA",0.3,"GAMMA of VAE-GAN")
 FLAGS = flags.FLAGS
 
 def main(_):
