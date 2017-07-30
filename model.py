@@ -139,8 +139,8 @@ class DCGAN(object):
         return tf.nn.sigmoid_cross_entropy_with_logits(logits=x, targets=y)
     if self.FLAGS.W_GAN is True:
         # Standard WGAN loss
-            self.g_loss = -tf.reduce_mean(self.D_logits_)
-            self.d_loss = tf.reduce_mean(self.D_logits_) - tf.reduce_mean(self.D_logits)
+            self.g_loss = -0.5*tf.reduce_mean(self.D_logits_) -0.5* tf.reduce_mean(self.D_logits2)
+            self.d_loss = 0.5*tf.reduce_mean(self.D_logits_) - tf.reduce_mean(self.D_logits) +0.5*tf.reduce_mean(self.D_logits2)
 
             # Gradient penalty
             alpha = tf.random_uniform(
@@ -148,6 +148,14 @@ class DCGAN(object):
                 minval=0.,
                 maxval=1.
             )
+            differences = tf.reshape(self.inputs_ - inputs,[self.batch_size,-1])
+            interpolates = tf.reshape(inputs,[self.batch_size,-1]) + (alpha*differences)
+            interpolates = tf.reshape(interpolates,inputs.get_shape())
+            _ ,d_image = self.discriminator(interpolates,reuse=True)
+            gradients = tf.gradients(d_image, [interpolates])[0]
+            slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
+            gradient_penalty = tf.reduce_mean((slopes-1.)**2)
+            self.d_loss += self.FLAGS.LAMBDA*gradient_penalty
             differences = tf.reshape(self.G - inputs,[self.batch_size,-1])
             interpolates = tf.reshape(inputs,[self.batch_size,-1]) + (alpha*differences)
             interpolates = tf.reshape(interpolates,inputs.get_shape())
