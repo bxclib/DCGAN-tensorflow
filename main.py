@@ -28,7 +28,7 @@ flags.DEFINE_boolean("visualize", False, "True for visualizing, False for nothin
 flags.DEFINE_boolean("W_GAN",True,"True use W-GAN,false use DC-GAN")
 flags.DEFINE_integer("CRITIC_NUM",10,"CRITIC_NUM of W-GAN")
 flags.DEFINE_integer("LAMBDA",10,"LAMBDA of W-GAN")
-flags.DEFINE_float("GAMMA",0.1,"GAMMA of VAE-GAN")
+flags.DEFINE_float("GAMMA",0.005,"GAMMA of VAE-GAN")
 FLAGS = flags.FLAGS
 
 def main(_):
