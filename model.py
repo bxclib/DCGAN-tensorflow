@@ -184,7 +184,7 @@ class DCGAN(object):
             self.latent_loss = -0.5 * tf.reduce_sum(1 + self.z_log_sigma_sq 
                                                - tf.square(self.z_mean) 
                                                - tf.exp(self.z_log_sigma_sq), 1)
-            self.e_loss = tf.reduce_mean(self.reconstr_loss + self.latent_loss)
+            self.e_loss = self.FLAGS.GAMMA * tf.reduce_mean(self.reconstr_loss + self.latent_loss)
             self.g_loss = self.g_loss + self.FLAGS.GAMMA * tf.reduce_mean(self.reconstr_loss)
 
     else:
