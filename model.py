@@ -119,8 +119,7 @@ class DCGAN(object):
       self.inputs_= self.generator(self.E)
       self.G = self.generator(self.z,reuse=True)
       self.D, self.D_logits = self.discriminator(self.inputs)
-      self.D2, self.D_logits2 = self.discriminator(self.inputs_,reuse=True)
-      
+      self.D2, self.D_logits2 = self.discriminator(self.inputs_,reuse=True)    
       self.sampler = self.sampler(self.z)
       self.D_, self.D_logits_ = self.discriminator(self.G, reuse=True)
 	  self.z_w_min=tf.argmin(input=self.D_logits2,dimension=0)[0]
