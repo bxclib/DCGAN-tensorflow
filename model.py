@@ -122,11 +122,11 @@ class DCGAN(object):
       self.D2, self.D_logits2 = self.discriminator(self.inputs_,reuse=True)    
       self.sampler = self.sampler(self.z)
       self.D_, self.D_logits_ = self.discriminator(self.G, reuse=True)
-      self.z_w_min=tf.argmin(input=self.D_logits2,dimension=0)[0]
-      self.z_mean_choose=(self.z_mean[self.z_w_min])*self.
+      self.z_w_min=tf.to_int32(tf.argmin(input=self.D_logits2,dimension=0))
+      self.z_mean_choose=(self.z_mean[self.z_w_min])*self.batch_size
       self.z_log_sigma_sq_choose=(self.z_log_sigma_sq[self.z_w_min])*self.batch_size
       self.E2 = tf.add(self.z_mean_choose, tf.multiply(tf.sqrt(tf.exp(self.z_log_sigma_sq_choose)), eps))
-      self.inputs_choose= self.generator(self.E2)
+      self.inputs_choose= self.generator(self.E2,reuse=True)
       self.D3, self.D_logits3 = self.discriminator(self.inputs_choose,reuse=True)
     if self.FLAGS.W_GAN is False:
         self.d_sum = histogram_summary("d", self.D)
@@ -437,12 +437,13 @@ class DCGAN(object):
                 feed_dict={  self.z: batch_z ,self.inputs: batch_images })
               
               self.writer.add_summary(summary_str, counter)
-
+              
               errE = self.e_loss.eval({self.inputs: batch_images })
               errD = self.d_loss.eval({ self.z: batch_z ,self.inputs: batch_images})
               errG = self.g_loss.eval({ self.z: batch_z ,self.inputs: batch_images})
               err_rc = tf.reduce_mean(self.reconstr_loss).eval({self.inputs: batch_images })
               W_dis = self.w_distance.eval({ self.z: batch_z ,self.inputs: batch_images})
+              important_z = self.z_w_min.eval({ self.z: batch_z ,self.inputs: batch_images})
         counter += 1
         if self.FLAGS.W_GAN is False:
             print("Epoch: [%2d] [%4d/%4d] time: %4.4f, d_loss: %.8f, g_loss: %.8f, e_loss: %.8f" \
@@ -452,7 +453,7 @@ class DCGAN(object):
             print("Epoch: [%2d] [%4d/%4d] time: %4.4f, d_loss: %.8f, g_loss: %.8f, e_loss: %.8f, W_distance: %.8f, reconstruction_loss: %.8f"\
               % (epoch, idx, batch_idxs,
                 time.time() - start_time, errD, errG, errE, W_dis , err_rc))
-         
+            print("The most important z is ",important_z)
         if np.mod(counter, 100) == 1:
           if config.dataset == 'mnist':
             samples, d_loss, g_loss = self.sess.run(
@@ -761,4 +762,5 @@ class DCGAN(object):
                     './{}/train_{:02d}_{:04d}(reconstruction).png'.format(config.sample_dir, epoch, idx))
       except:
               print("one pic error!...")
+
 
