@@ -122,12 +122,12 @@ class DCGAN(object):
       self.D2, self.D_logits2 = self.discriminator(self.inputs_,reuse=True)    
       self.sampler = self.sampler(self.z)
       self.D_, self.D_logits_ = self.discriminator(self.G, reuse=True)
-	  self.z_w_min=tf.argmin(input=self.D_logits2,dimension=0)[0]
-	  self.z_mean_choose=(self.z_mean[self.z_w_min])*self.
-	  self.z_log_sigma_sq_choose=(self.z_log_sigma_sq[self.z_w_min])*self.batch_size
-	  self.E2 = tf.add(self.z_mean_choose, tf.multiply(tf.sqrt(tf.exp(self.z_log_sigma_sq_choose)), eps))
-	  self.inputs_choose= self.generator(self.E2)
-	  self.D3, self.D_logits3 = self.discriminator(self.inputs_choose,reuse=True)
+      self.z_w_min=tf.argmin(input=self.D_logits2,dimension=0)[0]
+      self.z_mean_choose=(self.z_mean[self.z_w_min])*self.
+      self.z_log_sigma_sq_choose=(self.z_log_sigma_sq[self.z_w_min])*self.batch_size
+      self.E2 = tf.add(self.z_mean_choose, tf.multiply(tf.sqrt(tf.exp(self.z_log_sigma_sq_choose)), eps))
+      self.inputs_choose= self.generator(self.E2)
+      self.D3, self.D_logits3 = self.discriminator(self.inputs_choose,reuse=True)
     if self.FLAGS.W_GAN is False:
         self.d_sum = histogram_summary("d", self.D)
         self.d__sum = histogram_summary("d_", self.D_)
