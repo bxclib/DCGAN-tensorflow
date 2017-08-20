@@ -241,8 +241,57 @@ def visualize(sess, dcgan, config, option):
     new_image_set = [merge(np.array([images[idx] for images in image_set]), [10, 10]) \
         for idx in range(64) + range(63, -1, -1)]
     make_gif(new_image_set, './samples/test_gif_merged.gif', duration=8)
+  elif option == 5:
+    im1=get_image(dcgan.image["image1"],
+                        input_height=dcgan.input_height,
+                        input_width=dcgan.input_width,
+                        resize_height=dcgan.output_height,
+                        resize_width=dcgan.output_width,
+                        crop=dcgan.crop,
+                        grayscale=dcgan.grayscale)
+    im2=get_image(dcgan.image["image2"],
+                        input_height=dcgan.input_height,
+                        input_width=dcgan.input_width,
+                        resize_height=dcgan.output_height,
+                        resize_width=dcgan.output_width,
+                        crop=dcgan.crop,
+                        grayscale=dcgan.grayscale)
+    imc1=[]
+    imc2=[]
+    for i in range(config.batch_size):
+        imc1.append(im1)
+        imc2.append(im2)
+    im1=np.array(imc1)
+    im2=np.array(imc2)
+    z_mean1, z_log_sigma_sq1 = sess.run([dcgan.z_mean, dcgan.z_log_sigma_sq],feed_dict={
+                    dcgan.inputs: im1
+                })
+    z_mean2, z_log_sigma_sq2 = sess.run([dcgan.z_mean, dcgan.z_log_sigma_sq],feed_dict={
+                    dcgan.inputs: im2
+                })
+    eps = np.random.normal(size=[config.batch_size, dcgan.z_dim]) \
+              .astype(np.float32)
 
+    sample_z1 = (z_mean1[0]+np.multiply(np.sqrt(np.exp(z_log_sigma_sq1[0])), eps))[0]
+    sample_z2 = (z_mean2[0]+np.multiply(np.sqrt(np.exp(z_log_sigma_sq2[0])), eps))[0]
+    z_d=sample_z2-sample_z1
+    z=[]
+    for i in range(config.batch_size):
+        j=i*1.0/(config.batch_size-1)
+        z.append(sample_z1+j*(z_d))
+    z=np.array(z)
+    try:
+        samples = sess.run(
+                    dcgan.sampler,
+                    feed_dict={
+                        dcgan.z: z,
+                    },
+                  )
 
+        save_images(samples, image_manifold_size(samples.shape[0]),
+                        "./samples/"+dcgan.image["image1"].split("/")[-1][0:-4]+"-"+dcgan.image["image2"].split("/")[-1][0:-4]+".png")
+    except:
+        print("one pic error!...")
 def image_manifold_size(num_images):
   manifold_h = int(np.floor(np.sqrt(num_images)))
   manifold_w = int(np.ceil(np.sqrt(num_images)))

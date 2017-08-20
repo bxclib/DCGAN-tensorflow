@@ -17,11 +17,13 @@ flags.DEFINE_integer("input_height", 108, "The size of image to use (will be cen
 flags.DEFINE_integer("input_width", None, "The size of image to use (will be center cropped). If None, same value as input_height [None]")
 flags.DEFINE_integer("output_height", 64, "The size of the output images to produce [64]")
 flags.DEFINE_integer("output_width", None, "The size of the output images to produce. If None, same value as output_height [None]")
-flags.DEFINE_integer("visualize_option",1,"The method use to visualize")
+flags.DEFINE_integer("visualize_option",5,"The method use to visualize")
 flags.DEFINE_string("dataset", "celebA", "The name of dataset [celebA, mnist, lsun]")
 flags.DEFINE_string("input_fname_pattern", "*.jpg", "Glob pattern of filename of input images [*]")
 flags.DEFINE_string("checkpoint_dir", "checkpoint", "Directory name to save the checkpoints [checkpoint]")
 flags.DEFINE_string("sample_dir", "samples", "Directory name to save the image samples [samples]")
+flags.DEFINE_string("image1", "image1", "Directory name of image1")
+flags.DEFINE_string("image2", "image2", "Directory name of image2")
 flags.DEFINE_boolean("train", False, "True for training, False for testing [False]")
 flags.DEFINE_boolean("crop", False, "True for training, False for testing [False]")
 flags.DEFINE_boolean("visualize", False, "True for visualizing, False for nothing [False]")
@@ -97,7 +99,7 @@ def main(_):
     #                 [dcgan.h4_w, dcgan.h4_b, None])
 
     # Below is codes for visualization
-
+    dcgan.image={"image1":FLAGS.image1,"image2":FLAGS.image2}
     visualize(sess, dcgan, FLAGS, FLAGS.visualize_option)
 
 if __name__ == '__main__':
